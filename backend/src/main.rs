@@ -21,7 +21,7 @@ async fn main () {
             .service(
                 web::scope("/api")
                     .service(me)
-                    //.wrap(JwtAuth)
+                    .wrap(JwtAuth)
             )    
     })
     .bind("0.0.0.0:3000")
