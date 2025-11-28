@@ -79,6 +79,14 @@ async fn signin(app_state: web::Data<AppState>, body: web::Json<LoginRequest>) -
     }
 }
 
+#[derive(Serialize)]
+pub struct UserStats {
+    pub user_id: Uuid,
+    pub games_played: i32,
+    pub games_won: i32,
+    pub win_rate: f32,
+}
+
 #[get("/me")]
 async fn me(req: HttpRequest) -> impl Responder {
     if let Some(uid) = req.extensions().get::<Uuid>() {
@@ -87,5 +95,61 @@ async fn me(req: HttpRequest) -> impl Responder {
         }))
     } else {
         HttpResponse::Unauthorized().finish()
+    }
+}
+
+#[get("/me/stats")]
+async fn get_my_stats(app_state: web::Data<AppState>, req: HttpRequest) -> impl Responder {
+    if let Some(uid) = req.extensions().get::<Uuid>() {
+        match app_state.db.get_user_stats(*uid).await {
+            Ok((games_played, games_won, win_rate)) => {
+                HttpResponse::Ok().json(UserStats {
+                    user_id: *uid,
+                    games_played,
+                    games_won,
+                    win_rate,
+                })
+            }
+            Err(e) => {
+                println!("Failed to get user stats: {:?}", e);
+                HttpResponse::InternalServerError().json(serde_json::json!({
+                    "error": "Failed to retrieve user statistics"
+                }))
+            }
+        }
+    } else {
+        HttpResponse::Unauthorized().finish()
+    }
+}
+
+#[derive(Serialize)]
+pub struct AllUserStats {
+    pub user_id: Uuid,
+    pub games_played: i32,
+    pub games_won: i32,
+    pub win_rate: f32,
+}
+
+#[get("/stats")]
+async fn get_all_stats(app_state: web::Data<AppState>) -> impl Responder {
+    match app_state.db.get_all_user_stats().await {
+        Ok(stats) => {
+            let user_stats: Vec<AllUserStats> = stats.into_iter()
+                .map(|(user_id, games_played, games_won, win_rate)| AllUserStats {
+                    user_id,
+                    games_played,
+                    games_won,
+                    win_rate,
+                })
+                .collect();
+
+            HttpResponse::Ok().json(user_stats)
+        }
+        Err(e) => {
+            println!("Failed to get all user stats: {:?}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Failed to retrieve user statistics"
+            }))
+        }
     }
 }

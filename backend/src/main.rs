@@ -5,7 +5,7 @@ use std::sync::Arc;
 use dashmap::DashMap;
 
 use crate::routes::room::create_room;
-use crate::routes::user::{signup, signin, me};
+use crate::routes::user::{signup, signin, me, get_all_stats, get_my_stats};
 use crate::auth::middleware::JwtAuth;
 use state::AppState;
 use ws::join_room;
@@ -28,13 +28,15 @@ async fn main () {
     
     let _ = HttpServer::new( move || {
         App::new()
-            .wrap(Logger::default()) 
+            .wrap(Logger::default())
             .app_data(app_state.clone())
             .service(signup)
             .service(signin)
+            .service(get_all_stats)
             .service(
                 web::scope("/api")
                     .service(me)
+                    .service(get_my_stats)
                     .service(create_room)
                     .service(join_room)
                     .wrap(JwtAuth)

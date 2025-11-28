@@ -137,4 +137,24 @@ impl Db {
             stats.win_rate.unwrap_or(sqlx::types::BigDecimal::from(0)).to_f32().unwrap_or(0.0)
         ))
     }
+
+    pub async fn get_all_user_stats(&self) -> Result<Vec<(Uuid, i32, i32, f32)>> {
+        let rows = sqlx::query!(
+            "SELECT id, games_played, games_won, win_rate FROM users ORDER BY win_rate DESC"
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut stats = Vec::new();
+        for row in rows {
+            stats.push((
+                row.id,
+                row.games_played.unwrap_or(0),
+                row.games_won.unwrap_or(0),
+                row.win_rate.unwrap_or(sqlx::types::BigDecimal::from(0)).to_f32().unwrap_or(0.0)
+            ));
+        }
+
+        Ok(stats)
+    }
 }
