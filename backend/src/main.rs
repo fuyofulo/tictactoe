@@ -4,13 +4,16 @@ use actix_web::middleware::Logger;
 use std::sync::Arc;
 use dashmap::DashMap;
 
+use crate::routes::room::create_room;
 use crate::routes::user::{signup, signin, me};
 use crate::auth::middleware::JwtAuth;
 use state::AppState;
+use ws::join_room;
 
 pub mod routes;
 pub mod auth;
 pub mod state;
+pub mod ws;
 
 #[actix_web::main]
 async fn main () {
@@ -32,6 +35,8 @@ async fn main () {
             .service(
                 web::scope("/api")
                     .service(me)
+                    .service(create_room)
+                    .service(join_room)
                     .wrap(JwtAuth)
             )    
     })

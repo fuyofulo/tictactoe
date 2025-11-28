@@ -2,9 +2,7 @@ use actix_web::{HttpResponse,HttpRequest, HttpMessage, Responder, post, web, get
 use serde::{Serialize, Deserialize};
 use argon2::{Argon2, PasswordHasher, PasswordVerifier, password_hash::{PasswordHash, SaltString, rand_core::OsRng}};
 use uuid::Uuid;
-use db::Db;
-use crate::auth::jwt::create_jwt_for_user;
-
+use crate::{auth::jwt::create_jwt_for_user, state::AppState};
 #[derive(Serialize, Deserialize)]
 pub struct LoginRequest {
     pub username: String,
@@ -12,7 +10,7 @@ pub struct LoginRequest {
 }
 
 #[post("/signup")]
-async fn signup(db: web::Data<Db>, body: web::Json<LoginRequest>) -> impl Responder {
+async fn signup(app_state: web::Data<AppState>, body: web::Json<LoginRequest>) -> impl Responder {
     
     let salt = SaltString::generate(&mut OsRng);
     let argon2 = Argon2::default();
@@ -24,7 +22,7 @@ async fn signup(db: web::Data<Db>, body: web::Json<LoginRequest>) -> impl Respon
     };
     println!("{}", password_hash);
     
-    let result = db.create_user(&body.username, &password_hash).await;
+    let result = app_state.db.create_user(&body.username, &password_hash).await;
     
     match result {
         Ok(user) => {
@@ -47,9 +45,9 @@ pub struct SigninResponse {
 }
 
 #[post("/signin")]
-async fn signin(db: web::Data<Db>, body: web::Json<LoginRequest>) -> impl Responder {
+async fn signin(app_state: web::Data<AppState>, body: web::Json<LoginRequest>) -> impl Responder {
     
-    let result = db.get_user_by_username(&body.username).await;
+    let result = app_state.db.get_user_by_username(&body.username).await;
     
     match result {
         Ok(user) => {
