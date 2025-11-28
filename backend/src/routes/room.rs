@@ -5,6 +5,7 @@ use tokio::sync::{mpsc};
 use serde::{Serialize};
 
 use crate::{state::AppState};
+use db::models::games::{CreateGameRequest, PlayerSymbol};
 
 #[derive(Serialize)]
 struct CreateRoomResponse {
@@ -35,11 +36,6 @@ async fn create_room(req: HttpRequest, app_state: web::Data<AppState>) -> impl R
     })
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub enum PlayerSymbol {
-    X, 
-    O
-}
 
 #[derive(Debug, PartialEq, Clone, Copy, Eq)]
 pub enum GameStatus {
@@ -136,8 +132,8 @@ impl GameState {
     pub fn check_winner(&self) -> Option<PlayerSymbol> {
         let b = self.board;
         let wins = [
-            (0, 1, 2), (3, 4, 5), (6, 7, 8), // Rows
-            (0, 3, 6), (1, 4, 7), (2, 5, 8), // Cols
+            (0, 1, 2), (3, 4, 5), (6, 7, 8),
+            (0, 3, 6), (1, 4, 7), (2, 5, 8),
             (0, 4, 8), (2, 4, 6)
         ];
 
@@ -159,9 +155,11 @@ impl GameState {
 pub async fn room_task(room_id: Uuid, mut rx: mpsc::Receiver<GameCommand>, state: Arc<AppState>) {
     let mut game = GameState::new(room_id);
     let mut clients: HashMap<Uuid, mpsc::Sender<GameEvent>> = HashMap::new();
-    
+    let mut current_game_id: Option<Uuid> = None;
+    let mut move_count = 0;
+
     println!("Room {} spawned", room_id);
-    
+
     while let Some(cmd) = rx.recv().await {
         match cmd {
             GameCommand::Join { user_id, player_sender } => {
@@ -172,6 +170,20 @@ pub async fn room_task(room_id: Uuid, mut rx: mpsc::Receiver<GameCommand>, state
                         let _ = player_sender.send(GameEvent::GameJoined).await;
                         broadcast_game_state(&mut clients, &game).await;
 
+                        if player_symbol == PlayerSymbol::O && current_game_id.is_none() {
+                            match state.db.create_game(CreateGameRequest {
+                                room_id,
+                                player_x_id: game.player_x,
+                                player_o_id: game.player_o,
+                            }).await {
+                                Ok(game_record) => {
+                                    current_game_id = Some(game_record.id);
+                                    println!("Created game record: {}", game_record.id);
+                                }
+                                Err(e) => println!("Failed to create game record: {:?}", e),
+                            }
+                        }
+
                         if player_symbol == PlayerSymbol::O {
                             if let Some(first_player_id) = game.player_x {
                                 if let Some(tx) = clients.get(&first_player_id) {
@@ -179,7 +191,8 @@ pub async fn room_task(room_id: Uuid, mut rx: mpsc::Receiver<GameCommand>, state
                                 }
                             }
                         }
-                        println!("player {} joined as {:?}, game status: {:?}", user_id, player_symbol, game.status)
+
+                        println!("Player {} joined as {:?}, game status: {:?}", user_id, player_symbol, game.status);
                     }
                     Err(e) => {
                         let _ = player_sender.send(GameEvent::Error(e)).await;
@@ -187,9 +200,9 @@ pub async fn room_task(room_id: Uuid, mut rx: mpsc::Receiver<GameCommand>, state
                 }
             }
             GameCommand::Move { user_id, idx } => {
-                println!("move attempt: user {}, position {}, game status: {:?}", user_id, idx, game.status);
+                println!("move attempt: user {}, position {}", user_id, idx);
                 if game.status != GameStatus::Active {
-                    println!("game not active right now");
+                    println!("game not active");
                     if let Some(tx) = clients.get(&user_id) {
                         let _ = tx.send(GameEvent::Error("waiting for opponent".to_string())).await;
                     }
@@ -197,6 +210,8 @@ pub async fn room_task(room_id: Uuid, mut rx: mpsc::Receiver<GameCommand>, state
                 }
                 match game.make_move(idx) {
                     Ok(_) => {
+                        move_count += 1;
+
                         if let Some(winner_symbol) = game.check_winner() {
                             game.status = GameStatus::Finished;
                             let winner_id = match winner_symbol {
@@ -207,7 +222,35 @@ pub async fn room_task(room_id: Uuid, mut rx: mpsc::Receiver<GameCommand>, state
                             let event = GameEvent::GameOver { winner: winner_id };
                             for client in clients.values() {
                                 let _ = client.send(event.clone()).await;
-                                // todo: sync to db
+                            }
+
+                            if let Some(game_id) = current_game_id {
+                                let board_state: Vec<Option<PlayerSymbol>> = game.board.iter().map(|&cell| cell).collect();
+                                let _ = state.db.finish_game(
+                                    game_id,
+                                    winner_id,
+                                    &board_state,
+                                    move_count,
+                                ).await;
+                                println!("Game {} finished, winner: {:?}", game_id, winner_id);
+                            }
+                        } else if game.is_draw() {
+                            game.status = GameStatus::Finished;
+                            broadcast_game_state(&mut clients, &game).await;
+                            let event = GameEvent::GameOver { winner: None };
+                            for client in clients.values() {
+                                let _ = client.send(event.clone()).await;
+                            }
+
+                            if let Some(game_id) = current_game_id {
+                                let board_state: Vec<Option<PlayerSymbol>> = game.board.iter().map(|&cell| cell).collect();
+                                let _ = state.db.finish_game(
+                                    game_id,
+                                    None,
+                                    &board_state,
+                                    move_count,
+                                ).await;
+                                println!("Game {} ended in draw", game_id);
                             }
                         } else {
                             game.switch_turn();
@@ -235,7 +278,17 @@ pub async fn room_task(room_id: Uuid, mut rx: mpsc::Receiver<GameCommand>, state
                         for client in clients.values() {
                             let _ = client.send(event.clone()).await;
                         }
-                        // todo: sync to db
+                    }
+
+                    if let Some(game_id) = current_game_id {
+                        let board_state: Vec<Option<PlayerSymbol>> = game.board.iter().map(|&cell| cell).collect();
+                        let _ = state.db.finish_game(
+                            game_id,
+                            winner_id,
+                            &board_state,
+                            move_count,
+                        ).await;
+                        println!("Game {} abandoned, winner: {:?}", game_id, winner_id);
                     }
                 }
             }
