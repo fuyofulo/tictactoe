@@ -1,10 +1,9 @@
 use actix_web::dev::{Service, ServiceRequest, ServiceResponse, Transform};
-use actix_web::{Error, HttpMessage, HttpResponse};
+use actix_web::{Error, HttpMessage};
 use actix_web::error::ErrorUnauthorized;
 use futures::future::{LocalBoxFuture, ready, Ready};
 use std::rc::Rc;
 use std::task::{Context, Poll};
-use std::future::Future;
 use uuid::Uuid;
 use crate::auth::jwt::verify_jwt;
 
@@ -43,7 +42,7 @@ where
         self.service.poll_ready(cx)
     }
     
-    fn call(&self, mut req: ServiceRequest) -> Self::Future {
+    fn call(&self, req: ServiceRequest) -> Self::Future {
         
         let path = req.path().to_string();
         if path.starts_with("/auth/") || path == "signin" || path == "signup" {

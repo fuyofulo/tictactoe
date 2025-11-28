@@ -1,8 +1,6 @@
 use actix_web::{HttpResponse,HttpRequest, HttpMessage, Responder, post, web, get};
 use serde::{Serialize, Deserialize};
 use argon2::{Argon2, PasswordHasher, PasswordVerifier, password_hash::{PasswordHash, SaltString, rand_core::OsRng}};
-use rand::Rng;
-use rand::distr::Alphanumeric;
 use uuid::Uuid;
 use db::Db;
 use crate::auth::jwt::create_jwt_for_user;
